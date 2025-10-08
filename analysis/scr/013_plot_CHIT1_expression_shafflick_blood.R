@@ -8,11 +8,11 @@ library(tidyverse)
 library(scales)
 library(ComplexHeatmap)
 library(lemon)
-library(finalfit)
+# library(finalfit)
 library(cowplot)
 library(patchwork)
 library(Nebulosa)
-library(viridis)
+# library(viridis)
 
 # read in the dataset -----------------------------------------------------
 data.combined <- readRDS("../data/data/schafflick_blood_harmony_by_origident.rds")
@@ -228,7 +228,7 @@ df_tot %>%
 # ggsave("../../out/image/00_UMAPggplot_annotationConfident_DPP3_count.pdf",width = 13,height = 12)
 
 # do the same using Seurat
-FeaturePlot(data.combined,features = GOI,split.by = "pathology",raster = T,order = T,ncol = 3)
+FeaturePlot(data.combined,features = GOI,split.by = "pathology",raster = T,order = T,ncol = 2)
 # ggsave("../../out/image/06_UMAPSeurat_annotationConfident_DPP3_count.pdf",width = 25,height = 3)
 
 df_tot %>%
