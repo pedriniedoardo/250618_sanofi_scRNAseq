@@ -1,0 +1,10 @@
+# folder
+out/
+data/
+.Rproj.user/
+
+# files
+.Rhistory
+.RData
+.Rproj.user
+.Ruserdata
