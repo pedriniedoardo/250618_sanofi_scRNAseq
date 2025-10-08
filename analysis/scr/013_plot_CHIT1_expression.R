@@ -1,5 +1,5 @@
 # AIM ---------------------------------------------------------------------
-# explore the expression of CHIT1 in the WM + CX dataset
+# explore the expression of CHIT1 in the shafflick blood dataset
 
 # libraries ---------------------------------------------------------------
 library(Seurat)
@@ -12,21 +12,113 @@ library(finalfit)
 library(cowplot)
 library(patchwork)
 library(Nebulosa)
+library(viridis)
 
 # read in the dataset -----------------------------------------------------
-data.combined <- readRDS("../../out/object/revision/120_WMCX_ManualClean4_harmonySkipIntegration_AllSoupX_4000_AnnotationSCType_manualAnnotation.rds")
+data.combined <- readRDS("../data/data/schafflick_blood_harmony_by_origident.rds")
 DimPlot(data.combined,label = T,raster = T,group.by = "seurat_clusters")
-DimPlot(data.combined,label = T,raster = T,group.by = "expertAnno.l1")
-DimPlot(data.combined,label = T,raster = T,group.by = "expertAnno.l1",split.by = "origin")
-DimPlot(data.combined,label = T,raster = T,group.by = "origin")
-DimPlot(data.combined,label = T,raster = T,group.by = "pathology_class")
+ggsave("../out/plot/013_UMAP_shafflick_blood_cluster.pdf",width = 5,height = 4)
+
+data.combined@meta.data
+
+# load the label transfer annotation done over the classical PBMC dataset
+meta_data.combined <- read_tsv("../data/data/schafflick_blood_metaAzimuth.tsv")
+
+# wrangling ---------------------------------------------------------------
+# pull the sample id from the barcode information and add it as metadata
+data.combined$sample_id <- data.combined@meta.data %>%
+  rownames_to_column("barcode") %>%
+  mutate(barcode = str_remove(barcode,pattern = "blood_ms_|blood_ctrl_")) %>%
+  separate(barcode,into = c("sample_id","barcode_id"),sep = "_") %>%
+  pull(sample_id)
+
+# Identify the most likely assignment for each seurat cluster. this comes from Azimuth on the sc PBMC dataset.
+prop_table_seurat_clusters <- meta_data.combined %>%
+  group_by(seurat_clusters,predicted.celltype.l1) %>%
+  summarise(n = n()) %>%
+  mutate(tot = sum(n)) %>%
+  mutate(prop = n/tot) %>%
+  select(seurat_clusters,predicted.celltype.l1,prop) %>%
+  pivot_wider(names_from = seurat_clusters,values_from = prop,values_fill=0) %>%
+  column_to_rownames("predicted.celltype.l1") %>% 
+  as.matrix()
+
+pdf("../out/plot/013_heatmap_shafflick_blood_celltype.l1.pdf",height = 3,width = 4)
+Heatmap(prop_table_seurat_clusters,
+        name = "prop", 
+        column_title = "celltype.l1",
+        cluster_rows = T,cluster_columns = T,col = viridis::turbo(10))
+dev.off()
+
+# based on this classification, add the assigned cell classification to the main object.
+data.combined$cell_id.l1 <- data.combined@meta.data %>%
+  mutate(cell_id.l1 = case_when(seurat_clusters %in% c(1,9)~"MONO",
+                             seurat_clusters %in% c(6,14)~"B",
+                             seurat_clusters %in% c(0,3,4,7,10)~"CD4 T",
+                             seurat_clusters %in% c(11,13)~"DC",
+                             seurat_clusters %in% c(8,12)~"other",
+                             seurat_clusters %in% c(5)~"NK",
+                             seurat_clusters %in% c(2)~"CD8 T")) %>%
+  pull(cell_id.l1)
+
+# confirm the annotation
+DimPlot(data.combined,group.by = "cell_id.l1",raster=T,label=T)
+ggsave("../out/plot/013_UMAP_shafflick_blood_celltype.l1.pdf",width = 5,height = 4)
+
+# confirm the annotaiton using a dotplot and a panel of known markers
+shortlist_features_list <- list(
+  "CD4 T" = c("CD4", "IL7R", "CCR7", "CD3E", "TRAC"),
+  "CD8 T" = c("CD8A", "CD8B", "GZMB", "GZMH", "PRF1"),
+  "B" = c("MS4A1", "CD19", "CD79A", "CD79B", "BANK1"),
+  "Mono" = c("CD14", "LYZ", "S100A8", "S100A9", "FCGR3A"),
+  "NK" = c("GNLY", "NKG7", "KLRD1", "FCGR3A", "NCAM1"),
+  "DC" = c("ITGAX", "LILRA4", "FCER1A", "CLEC9A", "HLA-DPB1")
+)
+
+# define the ident
+Idents(data.combined) <- "cell_id.l1"
+
+# make the plot
+test_long <- DotPlot(data.combined,
+                     features = unique(unlist(shortlist_features_list)),
+                     dot.scale = 8,cluster.idents = T)+
+  theme(axis.text.x = element_text(angle = 90,hjust = 1,vjust = 0.5))
+
+# build the reference to allow for multiple time the same gene
+ref_tab <- test_long$data
+
+# option 1 costume plot
+test <- lapply(shortlist_features_list, function(x){
+  ref_tab %>% 
+    filter(features.plot %in% x)
+}) %>% 
+  bind_rows(.id = "feature.groups")
+
+test %>% 
+  filter(id %in% c("B","CD4 T","CD8 T","DC","MONO","NK","other")) %>%
+  mutate(id = factor(id, levels = c("B","CD4 T","CD8 T","DC","MONO","NK","other"))) %>% 
+  # mutate(id = fct_rev(id)) %>% 
+  ggplot(aes(x=features.plot,y=id))+
+  geom_point(aes(col=avg.exp.scaled,size=pct.exp),alpha=0.7)+
+  facet_wrap(~feature.groups,scales = "free_x",nrow = 1)+
+  theme_bw()+
+  theme(strip.background = element_blank(),panel.border = element_blank(), panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"),axis.text.x = element_text(angle = 45,hjust = 1))+
+  scale_color_gradient(low = "gray",high = "blue")+
+  # scale_color_viridis_c(option = "turbo")+
+  scale_size_continuous(range = c(0.1, 10))
+
+ggsave("../out/plot/013_dotplot_shafflick_blood_celltype.l1.pdf",width = 10,height = 4)
+
+# save the object with full annotation
+saveRDS(data.combined,"../out/object/013_schafflick_blood_full.rds")
+
+# explore gene expression -------------------------------------------------
 
 # str_subset(rownames(data.combined),pattern = "HIF")
 # define the gene of interest GOI
 # GOI <- c("Irf7","Ddx58")
 GOI <- c("CHIT1","TSPO")
-
-table(data.combined@meta.data$expertAnno.l1)
 
 # add a broader cell grouping
 # data.combined@meta.data$cell_type2 <- data.combined@meta.data |> 
@@ -64,16 +156,15 @@ dim(df_exp)
 dim(meta)
 
 df_tot <- purrr::reduce(list(meta,UMAP1_df,df_exp),left_join, by="barcodes")
-df_tot_avg <- df_tot %>% group_by(expertAnno.l1) %>% dplyr::select(UMAP_1, UMAP_2) %>% summarize_all(mean)
+df_tot_avg <- df_tot %>% group_by(cell_id.l1) %>% dplyr::select(UMAP_1, UMAP_2) %>% summarize_all(mean)
 
 dim(df_tot)
-
 
 head(data.combined@meta.data)
 
 # plot the average expression per sample use the variable cell tyep per donor as grouping
 # data.combined$group <- paste0(data.combined$orig.ident,".",data.combined$cell_type2)
-data.combined$group <- paste0(data.combined$pathology_class,"-",data.combined$expertAnno.l1,"-",data.combined$orig.ident)
+data.combined$group <- paste0(data.combined$pathology,"-",data.combined$cell_id.l1,"-",data.combined$sample_id)
 # data.combined$group2 <- paste0(data.combined$orig.ident,".",data.combined$treat,".",data.combined$cell_type2)
 Idents(data.combined) <- "group"
 DefaultAssay(data.combined) <- "RNA"
@@ -84,11 +175,11 @@ average_GOI <- AverageExpression(data.combined,features = GOI,group.by = c("grou
 # build the plot using both info
 ggplot(label= TRUE) +
   # geom_point(data = data2,aes(x = UMAP_1,y = UMAP_2,col=cell_type),size=0.3,alpha=0.1) +
-  geom_point(data = df_tot,aes(x = UMAP_1,y = UMAP_2,col=expertAnno.l1),size=0.3) +
+  geom_point(data = df_tot,aes(x = UMAP_1,y = UMAP_2,col=cell_id.l1),size=0.3) +
   # geom_point(data = data2_unc,aes(x = UMAP_1,y = UMAP_2),size=0.3,alpha=0.1,col="gray") +
   # geom_point(data = data2_defined,aes(x = UMAP_1,y = UMAP_2, col = robust_score),size=0.3,alpha=0.8) +
   # labs(color= "Clusters") +
-  ggrepel::geom_text_repel(data = df_tot_avg,aes(x = UMAP_1,y = UMAP_2,label = expertAnno.l1),col="black")+
+  ggrepel::geom_text_repel(data = df_tot_avg,aes(x = UMAP_1,y = UMAP_2,label = cell_id.l1),col="black")+
   guides(colour = guide_legend(override.aes = list(size=5)))+
   theme_bw()
 # facet_wrap(~infection)
@@ -97,7 +188,7 @@ ggplot(label= TRUE) +
 # no lab
 ggplot(label= TRUE) +
   # geom_point(data = data2,aes(x = UMAP_1,y = UMAP_2,col=cell_type),size=0.3,alpha=0.1) +
-  geom_point(data = df_tot,aes(x = UMAP_1,y = UMAP_2,col=expertAnno.l1),size=0.3) +
+  geom_point(data = df_tot,aes(x = UMAP_1,y = UMAP_2,col=cell_id.l1),size=0.3) +
   # geom_point(data = data2_unc,aes(x = UMAP_1,y = UMAP_2),size=0.3,alpha=0.1,col="gray") +
   # geom_point(data = data2_defined,aes(x = UMAP_1,y = UMAP_2, col = robust_score),size=0.3,alpha=0.8) +
   # labs(color= "Clusters") +
@@ -128,7 +219,7 @@ df_tot %>%
   mutate(exp_cat = factor(exp_cat,levels = c("neg","pos"))) %>%
   arrange(exp_cat) %>%
   ggplot(aes(x = UMAP_1, y = UMAP_2,col = exp)) + geom_point(alpha = 0.5,size = 0.2) +
-  facet_wrap(gene~pathology_class) +
+  facet_wrap(gene~pathology) +
   theme_cowplot() +
   scale_color_gradient(low = "gray",high = "blue") +
   # theme(strip.background = element_blank(),
@@ -137,7 +228,7 @@ df_tot %>%
 # ggsave("../../out/image/00_UMAPggplot_annotationConfident_DPP3_count.pdf",width = 13,height = 12)
 
 # do the same using Seurat
-FeaturePlot(data.combined,features = GOI,split.by = "pathology_class",raster = T,order = T,ncol = 3)
+FeaturePlot(data.combined,features = GOI,split.by = "pathology",raster = T,order = T,ncol = 3)
 # ggsave("../../out/image/06_UMAPSeurat_annotationConfident_DPP3_count.pdf",width = 25,height = 3)
 
 df_tot %>%
@@ -165,7 +256,7 @@ df_tot %>%
   mutate(exp_cat = factor(exp_cat,levels = c("neg","pos"))) %>%
   arrange(exp_cat) %>%
   ggplot(aes(x = UMAP_1, y = UMAP_2,col = exp)) + geom_point(alpha = 0.5,size = 0.05) +
-  facet_wrap(gene~pathology_class) +
+  facet_wrap(gene~pathology) +
   theme_cowplot() +
   # scale_color_gradient(low = "gray",high = "blue") +
   scale_color_viridis_c(option = "turbo") +
@@ -180,7 +271,7 @@ df_tot %>%
   mutate(exp_cat = factor(exp_cat,levels = c("neg","pos"))) %>%
   arrange(exp_cat) %>%
   ggplot(aes(x = UMAP_1, y = UMAP_2,col = exp_min_max)) + geom_point(alpha = 0.5,size = 0.2) +
-  facet_wrap(gene~pathology_class) +
+  facet_wrap(gene~pathology) +
   theme_cowplot() +
   scale_color_gradient(low = "gray",high = "blue") +
   # theme(strip.background = element_blank(),
@@ -196,7 +287,7 @@ df_tot %>%
   ggplot(aes(x = UMAP_1, y = UMAP_2,col = exp_cat)) + geom_point(alpha = 0.5,size = 0.05) +
   # facet_wrap(gene~NMDA_time,nrow = 2) +
   # facet_rep_wrap(gene~treat,repeat.tick.labels = "all",nrow=3)+
-  facet_wrap(gene~pathology_class)+
+  facet_wrap(gene~pathology)+
   guides(colour = guide_legend(override.aes = list(size=5))) +
   theme_cowplot() +
   scale_color_manual(values = c("gray","blue")) +
@@ -227,10 +318,10 @@ df_tot %>%
   # this is the processing shown in the violinplot function
   # mutate(exp_fix = exp + rnorm(nrow(.))/100000) %>%
   # ggplot(aes(x=NMDA_time,y=count)) + 
-  ggplot(aes(x=pathology_class,y=exp_fix)) + 
+  ggplot(aes(x=pathology,y=exp_fix)) + 
   geom_violin(scale = "width")+
   geom_point(position=position_jitter(width = 0.2),alpha=0.01) +
-  facet_wrap(~expertAnno.l1) +
+  facet_wrap(~cell_id.l1) +
   theme_bw() +
   theme(axis.text.x = element_text(hjust = 1,angle = 90)) +
   theme(strip.background = element_blank(),
@@ -244,14 +335,14 @@ df_avg <- average_GOI$RNA %>%
   mutate(gene = GOI) |> 
   pivot_longer(names_to = "group",values_to = "avg_exp",-gene) %>%
   # filter(!str_detect(group,pattern="doublet|unassigned")) |> 
-  mutate(pathology_class = str_extract(group,pattern = c("CX_Ctrl|CX_Demye|CX_Mye|WM_CA|WM_CI|WM_Core|WM_Ctrl|WM_NAWM"))) |> 
-  mutate(donor = str_extract(group,pattern = c("s\\d+"))) |> 
-  mutate(expertAnno.l1 = str_extract(group,pattern = c("AST|EPENDYMA|EXC|NEU|IMM|INH|NEU|LYM|OLIGO|OPC|VAS")))
+  mutate(pathology = str_extract(group,pattern = c("blood.ctrl|blood.MS"))) |> 
+  mutate(donor = str_extract(group,pattern = c("P\\w+|MS\\w+"))) |> 
+  mutate(cell_id.l1 = str_extract(group,pattern = c("B|CD4.T|CD8.T|DC|MONO|NK|other")))
 
 # plot the average expresison by cell annotation
 df_avg |>
   # ggplot(aes(x=NMDA_time,y=count)) + 
-  ggplot(aes(x=expertAnno.l1,y=avg_exp))+
+  ggplot(aes(x=cell_id.l1,y=avg_exp))+
   geom_boxplot(outlier.shape = NA)+
   geom_point(position = position_jitter(width = 0.1),alpha = 0.6)+
   # geom_col()+
@@ -266,7 +357,7 @@ df_avg |>
 # do the same as above but split by condition
 df_avg |>
   # ggplot(aes(x=NMDA_time,y=count)) + 
-  ggplot(aes(x=pathology_class,y=avg_exp))+
+  ggplot(aes(x=pathology,y=avg_exp))+
   geom_boxplot(outlier.shape = NA)+
   geom_point(position = position_jitter(width = 0.1),alpha = 0.6)+
   # geom_col()+
@@ -278,32 +369,32 @@ df_avg |>
   facet_wrap(~gene,scales = "free") +
   scale_y_continuous(trans = "log1p")
 
-# rank the expertAnno.l1 category by the average expression per sample (regardelss of the gene)
+# rank the cell_id.l1 category by the average expression per sample (regardelss of the gene)
 rank_cell_id <- df_avg %>%
-  group_by(expertAnno.l1) %>%
+  group_by(cell_id.l1) %>%
   summarise(avg = mean(avg_exp)) %>%
   arrange(desc(avg)) %>%
-  pull(expertAnno.l1)
+  pull(cell_id.l1)
 
 # generate the average estimates per cell annotation per gene
 summary_exp_cell_id <- df_avg %>%
-  group_by(expertAnno.l1, gene) %>%
+  group_by(cell_id.l1, gene) %>%
   summarise(avg = mean(avg_exp)) %>%
-  mutate(expertAnno.l1 = factor(expertAnno.l1,levels = rank_cell_id))
+  mutate(cell_id.l1 = factor(cell_id.l1,levels = rank_cell_id))
 
 # plot splitting by treat full
 df_avg |>
-  mutate(expertAnno.l1 = factor(expertAnno.l1,levels = rank_cell_id)) %>%
+  mutate(cell_id.l1 = factor(cell_id.l1,levels = rank_cell_id)) %>%
   # ggplot(aes(x=NMDA_time,y=count)) + 
-  ggplot(aes(x=pathology_class,y=avg_exp))+
+  ggplot(aes(x=pathology,y=avg_exp))+
   geom_boxplot(outlier.shape = NA)+
-  geom_point(position = position_jitter(width = 0.1),alpha = 0.6)+
+  geom_point(position = position_jitter(width = 0.1,height = 0),alpha = 0.6)+
   # geom_col()+
   # facet_wrap(~cell_type2,scales = "free")+
   theme_bw()+theme(axis.text.x = element_text(hjust = 1,angle = 90))+
   theme(strip.background = element_blank(),
         panel.border = element_rect(colour = "black", fill = NA))+
-  facet_grid(gene~expertAnno.l1,scales = "free") +
+  facet_grid(gene~cell_id.l1,scales = "free") +
   geom_hline(data = summary_exp_cell_id,aes(yintercept = avg),col="red",linetype = "dashed")
 # scale_fill_viridis_c(option = "plasma",name="log10 number \nof cells")
 # ggsave("../../out/image/06_dotplot_annotationConfident_DPP3_expressionAvg_treatFull.pdf",width = 9,height = 9)
@@ -311,7 +402,7 @@ df_avg |>
 # plot splitting by treat
 df_avg |>
   # ggplot(aes(x=NMDA_time,y=count)) + 
-  ggplot(aes(x=pathology_class,y=avg_exp))+
+  ggplot(aes(x=pathology,y=avg_exp))+
   geom_boxplot(outlier.shape = NA)+
   geom_point(position = position_jitter(width = 0.1),alpha = 0.6)+
   # geom_col()+
@@ -319,7 +410,7 @@ df_avg |>
   theme_bw()+theme(axis.text.x = element_text(hjust = 1,angle = 90))+
   theme(strip.background = element_blank(),
         panel.border = element_rect(colour = "black", fill = NA))+
-  facet_wrap(gene~expertAnno.l1,scales = "free")
+  facet_wrap(gene~cell_id.l1,scales = "free")
 # scale_fill_viridis_c(option = "plasma",name="log10 number \nof cells")
 # ggsave("../../out/image/00_dotplot_annotationConfident_DPP3_expressionAvg_treat.pdf",width = 9,height = 9)
 
@@ -336,12 +427,12 @@ df_avg_wide %>%
   scale_x_continuous(trans = "log1p") +
   scale_y_continuous(trans = "log1p") +
   theme_bw() +
-  facet_wrap(~expertAnno.l1,
+  facet_wrap(~cell_id.l1,
              scales="free") +
   theme(strip.background = element_blank())
 
 df_cor_stats <- df_avg %>%
-  split(f = .$expertAnno.l1) %>%
+  split(f = .$cell_id.l1) %>%
   lapply(function(x){
     test <- x %>%
       pivot_wider(names_from = gene,values_from = avg_exp)
@@ -349,4 +440,4 @@ df_cor_stats <- df_avg %>%
     cor.test(test$CHIT1,test$TSPO) %>%
       broom::tidy()
   }) %>%
-  bind_rows(.id = "expertAnno.l1")
+  bind_rows(.id = "cell_id.l1")
