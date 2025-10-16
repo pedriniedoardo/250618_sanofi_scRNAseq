@@ -132,7 +132,7 @@ GOI <- c("CHIT1","TSPO")
 meta <- data.combined@meta.data %>%
   rownames_to_column(var = "barcodes")
 
-# extrac the expression value
+# extract the expression value
 df_exp <- FetchData(data.combined, vars = GOI,slot = "data") |> 
   rownames_to_column("barcodes") |> 
   pivot_longer(names_to = "gene",values_to = "exp",-barcodes) |> 
