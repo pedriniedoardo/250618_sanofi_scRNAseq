@@ -1,5 +1,5 @@
 # AIM ---------------------------------------------------------------------
-# explore the expression of CHIT1 in the shafflick CSF dataset
+# explore the expression of FTL in the shafflick CSF dataset
 
 # libraries ---------------------------------------------------------------
 library(Seurat)
@@ -15,112 +15,113 @@ library(Nebulosa)
 # library(viridis)
 
 # read in the dataset -----------------------------------------------------
-data.combined <- readRDS("../data/data/schafflick_csf_harmony_by_patho.rds")
-DimPlot(data.combined,label = T,raster = T,group.by = "seurat_clusters")
-ggsave("../out/plot/013_UMAP_shafflick_csf_cluster.pdf",width = 5,height = 4)
-
-data.combined@meta.data
-
-# load the label transfer annotation done over the classical PBMC dataset
-meta_data.combined <- read_tsv("../data/data/schafflick_csf_metaAzimuth.tsv")
+# data.combined <- readRDS("../data/data/schafflick_csf_harmony_by_patho.rds")
+# DimPlot(data.combined,label = T,raster = T,group.by = "seurat_clusters")
+# ggsave("../out/plot/013_UMAP_shafflick_csf_cluster.pdf",width = 5,height = 4)
+# 
+# data.combined@meta.data
+# 
+# # load the label transfer annotation done over the classical PBMC dataset
+# meta_data.combined <- read_tsv("../data/data/schafflick_csf_metaAzimuth.tsv")
 
 # wrangling ---------------------------------------------------------------
-# pull the sample id from the barcode information and add it as metadata
-data.combined$sample_id <- data.combined@meta.data %>%
-  rownames_to_column("barcode") %>%
-  mutate(barcode = str_remove(barcode,pattern = "csf_ms_|csf_ctrl_")) %>%
-  separate(barcode,into = c("sample_id","barcode_id"),sep = "_") %>%
-  pull(sample_id)
-
-# Identify the most likely assignment for each seurat cluster. this comes from Azimuth on the sc PBMC dataset.
-prop_table_seurat_clusters <- meta_data.combined %>%
-  group_by(seurat_clusters,predicted.celltype.l1) %>%
-  summarise(n = n()) %>%
-  mutate(tot = sum(n)) %>%
-  mutate(prop = n/tot) %>%
-  select(seurat_clusters,predicted.celltype.l1,prop) %>%
-  pivot_wider(names_from = seurat_clusters,values_from = prop,values_fill=0) %>%
-  column_to_rownames("predicted.celltype.l1") %>% 
-  as.matrix()
-
-pdf("../out/plot/013_heatmap_shafflick_csf_celltype.l1.pdf",height = 3,width = 4)
-Heatmap(prop_table_seurat_clusters,
-        name = "prop", 
-        column_title = "celltype.l1",
-        cluster_rows = T,cluster_columns = T,col = viridis::turbo(10))
-dev.off()
-
-# based on this classification, add the assigned cell classification to the main object.
-data.combined$cell_id.l1 <- data.combined@meta.data %>%
-  mutate(cell_id.l1 = case_when(seurat_clusters %in% c(10,5,9)~"MONO",
-                                seurat_clusters %in% c(8,11)~"B",
-                                seurat_clusters %in% c(0,2)~"CD4 T",
-                                seurat_clusters %in% c(3)~"CD4 T clu3",
-                                seurat_clusters %in% c(6,12)~"DC",
-                                # seurat_clusters %in% c(8,12)~"other",
-                                seurat_clusters %in% c(7)~"NK",
-                                seurat_clusters %in% c(1)~"CD8 T clu1",
-                                seurat_clusters %in% c(4)~"CD8 T clu4")) %>%
-  pull(cell_id.l1)
-
-# confirm the annotation
-DimPlot(data.combined,group.by = "cell_id.l1",raster=T,label=T)
-ggsave("../out/plot/013_UMAP_shafflick_csf_celltype.l1.pdf",width = 6,height = 5)
-
-# confirm the annotaiton using a dotplot and a panel of known markers
-shortlist_features_list <- list(
-  "CD4 T" = c("CD4", "IL7R", "CCR7", "CD3E", "TRAC"),
-  "CD8 T" = c("CD8A", "CD8B", "GZMB", "GZMH", "PRF1"),
-  "B" = c("MS4A1", "CD19", "CD79A", "CD79B", "BANK1"),
-  "Mono" = c("CD14", "LYZ", "S100A8", "S100A9", "FCGR3A"),
-  "NK" = c("GNLY", "NKG7", "KLRD1", "FCGR3A", "NCAM1"),
-  "DC" = c("ITGAX", "LILRA4", "FCER1A", "CLEC9A", "HLA-DPB1")
-)
-
-# define the ident
-Idents(data.combined) <- "cell_id.l1"
-
-# make the plot
-test_long <- DotPlot(data.combined,
-                     features = unique(unlist(shortlist_features_list)),
-                     dot.scale = 8,cluster.idents = T)+
-  theme(axis.text.x = element_text(angle = 90,hjust = 1,vjust = 0.5))
-
-# build the reference to allow for multiple time the same gene
-ref_tab <- test_long$data
-
-# option 1 costume plot
-test <- lapply(shortlist_features_list, function(x){
-  ref_tab %>% 
-    filter(features.plot %in% x)
-}) %>% 
-  bind_rows(.id = "feature.groups")
-
-test %>% 
-  filter(id %in% c("B","CD4 T","CD4 T clu3","CD8 T","CD8 T clu1","CD8 T clu4","DC","MONO","NK","other")) %>%
-  mutate(id = factor(id, levels = c("B","CD4 T","CD4 T clu3","CD8 T","CD8 T clu1","CD8 T clu4","DC","MONO","NK","other"))) %>% 
-  # mutate(id = fct_rev(id)) %>% 
-  ggplot(aes(x=features.plot,y=id))+
-  geom_point(aes(col=avg.exp.scaled,size=pct.exp),alpha=0.7)+
-  facet_wrap(~feature.groups,scales = "free_x",nrow = 1)+
-  theme_bw()+
-  theme(strip.background = element_blank(),panel.border = element_blank(), panel.grid.major = element_blank(),
-        panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"),axis.text.x = element_text(angle = 45,hjust = 1))+
-  scale_color_gradient(low = "gray",high = "blue")+
-  # scale_color_viridis_c(option = "turbo")+
-  scale_size_continuous(range = c(0.1, 10))
-
-ggsave("../out/plot/013_dotplot_shafflick_csf_celltype.l1.pdf",width = 10,height = 4)
+# # pull the sample id from the barcode information and add it as metadata
+# data.combined$sample_id <- data.combined@meta.data %>%
+#   rownames_to_column("barcode") %>%
+#   mutate(barcode = str_remove(barcode,pattern = "csf_ms_|csf_ctrl_")) %>%
+#   separate(barcode,into = c("sample_id","barcode_id"),sep = "_") %>%
+#   pull(sample_id)
+# 
+# # Identify the most likely assignment for each seurat cluster. this comes from Azimuth on the sc PBMC dataset.
+# prop_table_seurat_clusters <- meta_data.combined %>%
+#   group_by(seurat_clusters,predicted.celltype.l1) %>%
+#   summarise(n = n()) %>%
+#   mutate(tot = sum(n)) %>%
+#   mutate(prop = n/tot) %>%
+#   select(seurat_clusters,predicted.celltype.l1,prop) %>%
+#   pivot_wider(names_from = seurat_clusters,values_from = prop,values_fill=0) %>%
+#   column_to_rownames("predicted.celltype.l1") %>% 
+#   as.matrix()
+# 
+# pdf("../out/plot/013_heatmap_shafflick_csf_celltype.l1.pdf",height = 3,width = 4)
+# Heatmap(prop_table_seurat_clusters,
+#         name = "prop", 
+#         column_title = "celltype.l1",
+#         cluster_rows = T,cluster_columns = T,col = viridis::turbo(10))
+# dev.off()
+# 
+# # based on this classification, add the assigned cell classification to the main object.
+# data.combined$cell_id.l1 <- data.combined@meta.data %>%
+#   mutate(cell_id.l1 = case_when(seurat_clusters %in% c(10,5,9)~"MONO",
+#                                 seurat_clusters %in% c(8,11)~"B",
+#                                 seurat_clusters %in% c(0,2)~"CD4 T",
+#                                 seurat_clusters %in% c(3)~"CD4 T clu3",
+#                                 seurat_clusters %in% c(6,12)~"DC",
+#                                 # seurat_clusters %in% c(8,12)~"other",
+#                                 seurat_clusters %in% c(7)~"NK",
+#                                 seurat_clusters %in% c(1)~"CD8 T clu1",
+#                                 seurat_clusters %in% c(4)~"CD8 T clu4")) %>%
+#   pull(cell_id.l1)
+# 
+# # confirm the annotation
+# DimPlot(data.combined,group.by = "cell_id.l1",raster=T,label=T)
+# ggsave("../out/plot/013_UMAP_shafflick_csf_celltype.l1.pdf",width = 6,height = 5)
+# 
+# # confirm the annotaiton using a dotplot and a panel of known markers
+# shortlist_features_list <- list(
+#   "CD4 T" = c("CD4", "IL7R", "CCR7", "CD3E", "TRAC"),
+#   "CD8 T" = c("CD8A", "CD8B", "GZMB", "GZMH", "PRF1"),
+#   "B" = c("MS4A1", "CD19", "CD79A", "CD79B", "BANK1"),
+#   "Mono" = c("CD14", "LYZ", "S100A8", "S100A9", "FCGR3A"),
+#   "NK" = c("GNLY", "NKG7", "KLRD1", "FCGR3A", "NCAM1"),
+#   "DC" = c("ITGAX", "LILRA4", "FCER1A", "CLEC9A", "HLA-DPB1")
+# )
+# 
+# # define the ident
+# Idents(data.combined) <- "cell_id.l1"
+# 
+# # make the plot
+# test_long <- DotPlot(data.combined,
+#                      features = unique(unlist(shortlist_features_list)),
+#                      dot.scale = 8,cluster.idents = T)+
+#   theme(axis.text.x = element_text(angle = 90,hjust = 1,vjust = 0.5))
+# 
+# # build the reference to allow for multiple time the same gene
+# ref_tab <- test_long$data
+# 
+# # option 1 costume plot
+# test <- lapply(shortlist_features_list, function(x){
+#   ref_tab %>% 
+#     filter(features.plot %in% x)
+# }) %>% 
+#   bind_rows(.id = "feature.groups")
+# 
+# test %>% 
+#   filter(id %in% c("B","CD4 T","CD4 T clu3","CD8 T","CD8 T clu1","CD8 T clu4","DC","MONO","NK","other")) %>%
+#   mutate(id = factor(id, levels = c("B","CD4 T","CD4 T clu3","CD8 T","CD8 T clu1","CD8 T clu4","DC","MONO","NK","other"))) %>% 
+#   # mutate(id = fct_rev(id)) %>% 
+#   ggplot(aes(x=features.plot,y=id))+
+#   geom_point(aes(col=avg.exp.scaled,size=pct.exp),alpha=0.7)+
+#   facet_wrap(~feature.groups,scales = "free_x",nrow = 1)+
+#   theme_bw()+
+#   theme(strip.background = element_blank(),panel.border = element_blank(), panel.grid.major = element_blank(),
+#         panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"),axis.text.x = element_text(angle = 45,hjust = 1))+
+#   scale_color_gradient(low = "gray",high = "blue")+
+#   # scale_color_viridis_c(option = "turbo")+
+#   scale_size_continuous(range = c(0.1, 10))
+# 
+# ggsave("../out/plot/013_dotplot_shafflick_csf_celltype.l1.pdf",width = 10,height = 4)
 
 # save the object with full annotation
-saveRDS(data.combined,"../out/object/013_schafflick_csf_full.rds")
+# saveRDS(data.combined,"../out/object/013_schafflick_csf_full.rds")
+data.combined <- readRDS("../out/object/013_schafflick_csf_full.rds")
 
 # explore gene expression -------------------------------------------------
 
 # str_subset(rownames(data.combined),pattern = "HIF")
 # define the gene of interest GOI
 # GOI <- c("Irf7","Ddx58")
-GOI <- c("CHIT1","TSPO")
+GOI <- c("FTL","TSPO")
 
 # add a broader cell grouping
 # data.combined@meta.data$cell_type2 <- data.combined@meta.data |> 
@@ -356,6 +357,10 @@ df_avg |>
   facet_wrap(~gene,scales = "free")+
   scale_y_continuous(trans = "log1p")
 
+# save the table of expression
+df_avg %>%
+  write_tsv("../out/table/013_avg_exp_FTL_shafflick_CSF.tsv")
+
 # do the same as above but split by condition
 df_avg |>
   # ggplot(aes(x=NMDA_time,y=count)) + 
@@ -423,11 +428,22 @@ df_avg_wide <- df_avg %>%
   pivot_wider(names_from = gene,values_from = avg_exp)
 
 df_avg_wide %>%
-  ggplot(aes(x=CHIT1,y=TSPO)) +
+  ggplot(aes(x=FTL,y=TSPO)) +
   geom_smooth(method = "lm") +
   geom_point() +
   scale_x_continuous(trans = "log1p") +
   scale_y_continuous(trans = "log1p") +
+  theme_bw() +
+  facet_wrap(~cell_id.l1,
+             scales="free") +
+  theme(strip.background = element_blank())
+
+df_avg_wide %>%
+  ggplot(aes(x=FTL,y=TSPO)) +
+  geom_smooth(method = "lm") +
+  geom_point() +
+  # scale_x_continuous(trans = "log1p") +
+  # scale_y_continuous(trans = "log1p") +
   theme_bw() +
   facet_wrap(~cell_id.l1,
              scales="free") +
@@ -439,7 +455,7 @@ df_cor_stats <- df_avg %>%
     test <- x %>%
       pivot_wider(names_from = gene,values_from = avg_exp)
     
-    cor.test(test$CHIT1,test$TSPO) %>%
+    cor.test(test$FTL,test$TSPO) %>%
       broom::tidy()
   }) %>%
   bind_rows(.id = "cell_id.l1")
