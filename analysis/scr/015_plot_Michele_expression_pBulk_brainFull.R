@@ -409,6 +409,7 @@ p2_batch <- df_plot_PCA_batch %>%
 # Uses patchwork to stack the uncorrected (top) and corrected (bottom)
 combined_plot <- (p1 + p2) / (p1_batch + p2_batch) + 
   plot_annotation("PCA: Before and After Batch Correction")
+ggsave(plot = combined_plot,filename = "../out/plot/015_PCA_compare.pdf",width = 10,height = 8)
 
 # -------------------------------------------------------------------------
 # z scale the table of expression per gene
